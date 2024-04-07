@@ -1,7 +1,7 @@
 use std::env;
 use std::fs::File;
 use std::io::{self, BufRead, Write};
-use futures::stream::{self, StreamExt};
+use futures::stream::{StreamExt};
 use reqwest::Client;
 use serde_json::json;
 
