@@ -1,7 +1,7 @@
 use std::env;
 use std::fs::File;
 use std::io::{self, BufRead, Write};
-use futures::stream::{StreamExt};
+use futures::stream::*;
 use reqwest::Client;
 use serde_json::json;
 
@@ -10,27 +10,29 @@ async fn send_to_claude_api(log_content: &str, output_file: &Option<String>) -> 
     let api_key = env::var("CLAUDE_API_KEY").expect("CLAUDE_API_KEY not set");
     let url = "https://api.anthropic.com/v1/message";
 
-    let prompt = format!("以下のログを解析し、エラーとワーニングを検出して、それぞれの対策を提案してください。回答は指定されたフォーマットで出力してください。\n\n{}\n\n出力フォーマット:\n\n出力されたError やWarning\n* {{PIPE で渡された内容のError やWarning に関わる部分を抜き出して列挙する}}\n\nError 原因:\n1. {{Error の原因を列挙する}}\n2. {{複数あればすべて列挙する}}\n\nError 対策:\n1. に関して\n  * {{対策内容を書く}}\n  * リファレンスにしたURL が存在していれば添付する\n\n2.に関して\n  * {{}}\n", log_content);
+    let prompt = format!("以下のログを解析し、エラーとワーニングを検出して、それぞれの対策を提案してください。\n\n{}", log_content);
 
     let response = client
         .post(url)
         .header("Content-Type", "application/json")
         .header("X-API-Key", api_key)
+        .header("anthropic-version", "2023-06-01")
         .json(&json!({
-            "model": "claude-v1",
+            "model": "claude-3-opus-20240229",
             "messages": [
                 {
                     "role": "Human",
                     "content": prompt,
                 }
             ],
-            "max_tokens_to_sample": 1000,
+            "max_tokens_to_sample": 1024,
             "stream": true,
         }))
         .send()
         .await?;
 
     let mut stream = response.bytes_stream();
+    let mut file = output_file.as_ref().map(|path| File::create(path).unwrap());
 
     while let Some(chunk) = stream.next().await {
         let chunk = chunk?;
@@ -47,6 +49,10 @@ async fn send_to_claude_api(log_content: &str, output_file: &Option<String>) -> 
                 if let Some(text) = parsed_data["completion"].as_str() {
                     print!("{}", text);
                     io::stdout().flush().unwrap();
+
+                    if let Some(file) = &mut file {
+                        write!(file, "{}", text).unwrap();
+                    }
                 }
             }
         }
@@ -73,15 +79,6 @@ async fn main() {
 
     if let Err(e) = send_to_claude_api(&log_content, &output_file).await {
         eprintln!("Error: {}", e);
-    } else {
-        println!("\n\nClaude API Response Complete");
-
-        if let Some(file_path) = output_file {
-            let mut file = File::create(file_path).unwrap();
-            writeln!(file, "{}", log_content).unwrap();
-            writeln!(file, "\nClaude API Response:").unwrap();
-        }
     }
-
-    println!("Complete");
+println!("\nComplete");
 }
