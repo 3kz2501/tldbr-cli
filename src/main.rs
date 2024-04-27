@@ -1,17 +1,22 @@
-use std::env;
-use std::fs::File;
-use std::io::{self, BufRead, Write};
 use futures::stream::*;
 use reqwest::Client;
 use serde_json::json;
+use std::env;
+use std::fs::File;
+use std::io::{self, BufRead, Write};
+use tokio::runtime::Runtime;
 
-async fn send_to_claude_api(log_content: &str, output_file: &Option<String>) -> Result<(), reqwest::Error> {
+async fn send_to_claude_api(
+    log_content: &str,
+    output_file: &Option<String>,
+) -> Result<(), reqwest::Error> {
     let client = Client::new();
     let api_key = env::var("CLAUDE_API_KEY").expect("CLAUDE_API_KEY not set");
     let url = "https://api.anthropic.com/v1/message";
-
     let prompt = format!("以下のログを解析し、エラーとワーニングを検出して、それぞれの対策を提案してください。\n\n{}", log_content);
 
+    // could not get response from the API
+    // how to fix this?
     let response = client
         .post(url)
         .header("Content-Type", "application/json")
@@ -37,7 +42,7 @@ async fn send_to_claude_api(log_content: &str, output_file: &Option<String>) -> 
     while let Some(chunk) = stream.next().await {
         let chunk = chunk?;
         let chunk_str = std::str::from_utf8(&chunk).unwrap();
-        
+
         let lines: Vec<&str> = chunk_str.split('\n').collect();
         for line in lines {
             if line.starts_with("data: ") {
@@ -53,6 +58,8 @@ async fn send_to_claude_api(log_content: &str, output_file: &Option<String>) -> 
                     if let Some(file) = &mut file {
                         write!(file, "{}", text).unwrap();
                     }
+                } else {
+                    eprintln!("Error: {}", parsed_data);
                 }
             }
         }
@@ -77,8 +84,10 @@ async fn main() {
         log_content.push('\n');
     }
 
-    if let Err(e) = send_to_claude_api(&log_content, &output_file).await {
-        eprintln!("Error: {}", e);
-    }
-println!("\nComplete");
+    println!("\n---------------- origin output -------------------\n");
+    let rt = Runtime::new().unwrap();
+    rt.block_on(async { send_to_claude_api(&log_content, &output_file).await })
+        .unwrap();
+
+    println!("\nComplete");
 }
