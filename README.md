@@ -5,7 +5,7 @@
 
 ## Usage
 ```
-$ ${some program test or compile} | tldbr-cli
+$ ${some program test or compile} 2>&1| tldbr-cli
 ```
 
 
