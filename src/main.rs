@@ -1,93 +1,65 @@
-use futures::stream::*;
+use reqwest::header::{HeaderMap, HeaderValue, AUTHORIZATION, CONTENT_TYPE};
 use reqwest::Client;
 use serde_json::json;
 use std::env;
-use std::fs::File;
-use std::io::{self, BufRead, Write};
-use tokio::runtime::Runtime;
+use std::io::{self, Read};
 
-async fn send_to_claude_api(
-    log_content: &str,
-    output_file: &Option<String>,
-) -> Result<(), reqwest::Error> {
+async fn send_to_openai_gpt4(log_content: &str) -> Result<(), reqwest::Error> {
     let client = Client::new();
-    let api_key = env::var("CLAUDE_API_KEY").expect("CLAUDE_API_KEY not set");
-    let url = "https://api.anthropic.com/v1/message";
+    let api_key = env::var("OPENAI_API_KEY").expect("OPENAI_API_KEY not set");
+    let url = "https://api.openai.com/v1/chat/completions";
     let prompt = format!("以下のログを解析し、エラーとワーニングを検出して、それぞれの対策を提案してください。\n\n{}", log_content);
 
-    // could not get response from the API
-    // how to fix this?
+    let mut headers = HeaderMap::new();
+    headers.insert(
+        AUTHORIZATION,
+        HeaderValue::from_str(&format!("Bearer {}", api_key)).unwrap(),
+    );
+    headers.insert(CONTENT_TYPE, HeaderValue::from_static("application/json"));
+
     let response = client
         .post(url)
-        .header("Content-Type", "application/json")
-        .header("X-API-Key", api_key)
-        .header("anthropic-version", "2023-06-01")
+        .headers(headers)
         .json(&json!({
-            "model": "claude-3-opus-20240229",
+            "model": "gpt-4o",
             "messages": [
                 {
-                    "role": "Human",
+                    "role": "user",
                     "content": prompt,
                 }
             ],
-            "max_tokens_to_sample": 1024,
-            "stream": true,
+            "max_tokens": 1024,
+            "stream": false  // ストリーミングを有効にする
         }))
         .send()
         .await?;
 
-    let mut stream = response.bytes_stream();
-    let mut file = output_file.as_ref().map(|path| File::create(path).unwrap());
+    let response_json = response.json::<serde_json::Value>().await?;
+    let completion = response_json["choices"][0]["message"]["content"]
+        .as_str()
+        .unwrap();
 
-    while let Some(chunk) = stream.next().await {
-        let chunk = chunk?;
-        let chunk_str = std::str::from_utf8(&chunk).unwrap();
-
-        let lines: Vec<&str> = chunk_str.split('\n').collect();
-        for line in lines {
-            if line.starts_with("data: ") {
-                let data = line[6..].trim();
-                if data == "[DONE]" {
-                    break;
-                }
-                let parsed_data: serde_json::Value = serde_json::from_str(data).unwrap();
-                if let Some(text) = parsed_data["completion"].as_str() {
-                    print!("{}", text);
-                    io::stdout().flush().unwrap();
-
-                    if let Some(file) = &mut file {
-                        write!(file, "{}", text).unwrap();
-                    }
-                } else {
-                    eprintln!("Error: {}", parsed_data);
-                }
-            }
-        }
-    }
+    println!("-------------------RESPONSE------------------");
+    println!("{}", completion);
+    println!("---------------------------------------------");
 
     Ok(())
 }
 
 #[tokio::main]
 async fn main() {
-    let args: Vec<String> = env::args().collect();
-    let output_file = args.get(1).cloned();
+    // 標準入力を取得
+    let mut stdin = io::stdin();
+    // 受け取った全ての内容を格納する文字列変数
+    let mut collected_output = String::new();
+    stdin.read_to_string(&mut collected_output).unwrap();
 
-    let stdin = io::stdin();
-    let lines = stdin.lock().lines();
-    let mut log_content = String::new();
+    println!("-------------------PIPE INPUT-------------------");
+    println!("{}", collected_output);
+    println!("------------------------------------------------");
 
-    for line in lines {
-        let line = line.unwrap();
-        println!("{}", line);
-        log_content.push_str(&line);
-        log_content.push('\n');
-    }
-
-    println!("\n---------------- origin output -------------------\n");
-    let rt = Runtime::new().unwrap();
-    rt.block_on(async { send_to_claude_api(&log_content, &output_file).await })
-        .unwrap();
+    println!("Start sending to OpenAI GPT-4...");
+    let _ = send_to_openai_gpt4(&collected_output).await;
 
     println!("\nComplete");
 }
